@@ -21,90 +21,254 @@ exports.fromGeoJson = function(geojson, fileName, options) {
         esriWKT = options.esriWKT;
     }
 
-    var promise = new Promise(function(resolve, reject) {
-        try {
-            var geoms = [];
-            var properties = [];
-            geojson.features.forEach(function(feature) {
-                geoms.push(feature.geometry.coordinates);
+    var fileNameWithoutExt = fileName || 'shapefiles-export';
 
-                for (var key in feature.properties) {
-                    if (feature.properties.hasOwnProperty(key) && !feature.properties[key]) {
-                        feature.properties[key] = ' ';
-                    }
-                }
+    if(fileNameWithoutExt.indexOf('.shp') !== -1) {
+        fileNameWithoutExt = fileNameWithoutExt.replace('.shp', '');
+    }
 
-                properties.push(feature.properties);
-            });
+    var pointGeoms = [];
+    var polyLineGeoms = [];
+    var polygonGeoms = [];
 
-            var geomType;
-            switch(geojson.features[0].geometry.type.toUpperCase()) {
-                case 'POINT':
-                case 'MULTIPOINT':
-                    geomType = 'POINT';
-                    break;
-                case 'LINESTRING':
-                case 'MULTILINESTRING':
-                    geomType = 'POLYLINE';
-                    break;
-                case 'POLYGON':
-                case 'MULTIPOLYGON':
-                    geomType = 'POLYGON';
-                    break;
-                default:
-                    reject(new Error('Given geometry type is not supported'));
+    var pointProperties = [];
+    var polyLineProperties = [];
+    var polygonProperties = [];
+
+    geojson.features.forEach(function(feature) {
+
+        for (var key in feature.properties) {
+            if (feature.properties.hasOwnProperty(key) && !feature.properties[key]) {
+                feature.properties[key] = ' ';
             }
-
-            writeShp(properties, geomType, geoms, function(err, files) {
-                if (err) {
-                    reject(ex);
-                } else {
-                    resolve(files);
-                }
-            });
-        } catch(ex) {
-            reject(ex);
+        }
+        switch(feature.geometry.type.toUpperCase()) {
+            case 'POINT':
+            case 'MULTIPOINT':
+                pointGeoms.push(feature.geometry.coordinates);
+                pointProperties.push(feature.properties);
+                break;
+            case 'LINESTRING':
+            case 'MULTILINESTRING':
+                polyLineGeoms.push(feature.geometry.coordinates);
+                polyLineProperties.push(feature.properties);
+                break;
+            case 'POLYGON':
+            case 'MULTIPOLYGON':
+                polygonGeoms.push(feature.geometry.coordinates);
+                polygonProperties.push(feature.properties);
+                break;
+            default:
+                reject(new Error('Given geometry type is not supported'));
         }
     });
 
-    return promise.then(function(files) {
-        if (fileName) {
-            var fileNameWithoutExt = fileName;
 
-            if(fileNameWithoutExt.indexOf('.shp') !== -1) {
-                fileNameWithoutExt = fileNameWithoutExt.replace('.shp', '');
+  
+
+    var promisePoints = new Promise(function(resolve, reject) {
+        try {
+            if (pointGeoms.length>0){
+
+                writeShp(pointProperties, 'POINT', pointGeoms, function(err, pointfiles) {
+                    if (err) {
+                        reject(ex);
+                    } else {
+                        resolve(pointfiles);
+                    }
+                });
+            }
+        } catch(ex) {
+            reject(ex);
+        }
+        
+    }); //end of first promise for points
+
+
+    var promiseLines = new Promise(function(resolve, reject) {
+        try {
+            if (polyLineGeoms.length>0){
+
+                writeShp(polyLineProperties, 'POLYLINE', polyLineGeoms, function(err, linefiles) {
+                    if (err) {
+                        reject(ex);
+                    } else {
+                        resolve(linefiles);
+                    }
+                });
+            }
+        } catch(ex) {
+            reject(ex);
+        }
+        
+    }); //end of promise for lines
+
+
+    var promisePolygons = new Promise(function(resolve, reject) {
+        try {
+            if (polygonGeoms.length>0){
+
+                writeShp(polygonProperties, 'POLYGON', polygonGeoms, function(err, polyfiles) {
+                    if (err) {
+                        reject(ex);
+                    } else {
+                        resolve(polyfiles);
+                    }
+                }).then;
             }
 
-            var writeTasks = [
-                writeFile(fileNameWithoutExt + '.shp', toBuffer(files.shp.buffer)),
-                writeFile(fileNameWithoutExt + '.shx', toBuffer(files.shx.buffer)),
-                writeFile(fileNameWithoutExt + '.dbf', toBuffer(files.dbf.buffer))
-            ];
+        } catch(ex) {
+            reject(ex);
+        }
+        
+    }); //end of promise for lines
 
-            if (esriWKT) {
-                writeTasks.push(writeFile(fileNameWithoutExt + '.prj', esriWKT));
+
+    var promiseProjection = new Promise(function(resolve, reject) {
+        try {
+            if (esriWKT){
+                resolve(esriWKT);
             }
+        } catch(ex) {
+            reject(ex);
+        }
+        
+    }); //end of first promise for points
 
-            return Promise.all(writeTasks)
+    
+    promisePolygons.then(function(polyfiles) {
+
+        if (!polyfiles) return;
+
+        try{
+            var writeTasks = [];
+
+            if (polyfiles){
+                writeTasks.push(writeFile(fileNameWithoutExt + '.POLYGON' + '.shp', toBuffer(polyfiles.shp.buffer)));
+                writeTasks.push(writeFile(fileNameWithoutExt + '.POLYGON' + '.shx', toBuffer(polyfiles.shx.buffer)));
+                writeTasks.push(writeFile(fileNameWithoutExt + '.POLYGON' + '.dbf', toBuffer(polyfiles.dbf.buffer)));
+            }            
+
+            // if (esriWKT) {
+            //     writeTasks.push(writeFile(fileNameWithoutExt + '.POLYGON' + '.prj', esriWKT));
+            // }
+
+            Promise.all(writeTasks)
                 .then(function() {
                     return [
-                        fileNameWithoutExt + '.shp',
-                        fileNameWithoutExt + '.shx',
-                        fileNameWithoutExt + '.dbf'
+                        fileNameWithoutExt + '.POLYGON' + '.shp',
+                        fileNameWithoutExt + '.POLYGON' + '.shx',
+                        fileNameWithoutExt + '.POLYGON' + '.dbf' //FDM SHOULD ADD .PRJ FILE AS WELL, IN CONDITIONAL FORM
                     ];
-                });
-         } else {
-              var fileData = [
-                  { data: toBuffer(files.shp.buffer), format: 'shp' },
-                  { data: toBuffer(files.shx.buffer), format: 'shx'},
-                  { data: toBuffer(files.dbf.buffer), format: 'dbf'}
-              ];
+                }); 
 
-              if (esriWKT) {
-                  fileData.push({ data: esriWKT, format: 'prj'});
-              }
+        }
+        catch(ex)
+        {
+            return reject(ex);
+        }         
 
-              return fileData;
+    });
+
+    promisePoints.then(function(pointfiles) {
+
+        if (!pointfiles) return;
+
+        try{
+            // var fileNameWithoutExt = fileName || 'shapefiles-export';
+
+            // if(fileNameWithoutExt.indexOf('.shp') !== -1) {
+            //     fileNameWithoutExt = fileNameWithoutExt.replace('.shp', '');
+            // }
+
+            var writeTasks = [];
+   
+            if (pointfiles){
+                writeTasks.push(writeFile(fileNameWithoutExt + '.POINT' + '.shp', toBuffer(pointfiles.shp.buffer)));
+                writeTasks.push(writeFile(fileNameWithoutExt + '.POINT' + '.shx', toBuffer(pointfiles.shx.buffer)));
+                writeTasks.push(writeFile(fileNameWithoutExt + '.POINT' + '.dbf', toBuffer(pointfiles.dbf.buffer)));
+            }
+     
+
+            // if (esriWKT) {
+            //     writeTasks.push(writeFile(fileNameWithoutExt + '.POINT' + '.prj', esriWKT));
+            // }           
+
+            Promise.all(writeTasks)
+                .then(function () {
+                    return [
+                        fileNameWithoutExt + '.POINT' + '.shp',
+                        fileNameWithoutExt + '.POINT' + '.shx',
+                        fileNameWithoutExt + '.POINT' + '.dbf'
+                    ];
+                }); 
+
+
+        }
+        catch(ex)
+        {
+            return reject(ex);
+        }         
+
+    });
+
+    promiseLines.then(function(linefiles) {
+
+        if (!linefiles) return;
+
+        try{        
+            // var fileNameWithoutExt = fileName || 'shapefiles-export';
+
+            // if(fileNameWithoutExt.indexOf('.shp') !== -1) {
+            //     fileNameWithoutExt = fileNameWithoutExt.replace('.shp', '');
+            // }
+
+            var writeTasks = [];
+              
+
+            if (linefiles){
+                writeTasks.push(writeFile(fileNameWithoutExt + '.POLYLINE' + '.shp', toBuffer(linefiles.shp.buffer)));
+                writeTasks.push(writeFile(fileNameWithoutExt + '.POLYLINE' + '.shx', toBuffer(linefiles.shx.buffer)));
+                writeTasks.push(writeFile(fileNameWithoutExt + '.POLYLINE' + '.dbf', toBuffer(linefiles.dbf.buffer)));
+            }   
+
+            // if (esriWKT) {
+            //     writeTasks.push(writeFile(fileNameWithoutExt + '.POLYLINE' + '.prj', esriWKT));
+            // }
+
+            Promise.all(writeTasks)
+                .then(function() {
+                    return [                    
+                        fileNameWithoutExt + '.POLYLINE' + '.shp',
+                        fileNameWithoutExt + '.POLYLINE' + '.shx',
+                        fileNameWithoutExt + '.POLYLINE' + '.dbf'                      
+                    ];
+                }); 
+
+        }
+        catch(ex)
+        {
+            return reject(ex);
+        }
+    });
+
+    promiseProjection.then(function(esriWKT) {
+
+        try{            
+            var writeTasks = [];              
+            writeTasks.push(writeFile(fileNameWithoutExt + '.prj', esriWKT));
+
+            Promise.all(writeTasks)
+                .then(function() {
+                    return [                    
+                        fileNameWithoutExt + '.prj'                      
+                    ];
+                }); 
+
+        }
+        catch(ex)
+        {
+            return reject(ex);
         }
     });
 };
